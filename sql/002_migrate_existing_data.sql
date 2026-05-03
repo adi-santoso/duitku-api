@@ -1,0 +1,44 @@
+-- ============================================
+-- DuitKu API: Migrate existing data (OPTIONAL)
+-- 
+-- Run this ONLY if you want to migrate existing
+-- owner accounts from Supabase Auth to app_users.
+-- 
+-- This creates app_users entries for existing auth.users
+-- so they can login via the new API.
+--
+-- NOTE: You'll need to set a new password for migrated users
+-- since we can't decrypt the existing Supabase Auth passwords.
+-- ============================================
+
+-- Option 1: Manually create your owner account
+-- Replace with your actual email and a bcrypt hash of your password
+-- You can generate a hash at: https://bcrypt-generator.com/
+-- 
+-- INSERT INTO app_users (email, password_hash, display_name, role, owner_id)
+-- VALUES (
+--   'your-email@example.com',
+--   '$2a$12$YOUR_BCRYPT_HASH_HERE',
+--   'Your Name',
+--   'owner',
+--   NULL
+-- );
+
+-- Option 2: If you want to keep the same UUID as your auth.users id
+-- (so existing transactions still link correctly)
+--
+-- INSERT INTO app_users (id, email, password_hash, display_name, role, owner_id)
+-- VALUES (
+--   'your-existing-auth-user-uuid',
+--   'your-email@example.com',
+--   '$2a$12$YOUR_BCRYPT_HASH_HERE',
+--   'Your Name',
+--   'owner',
+--   NULL
+-- );
+
+-- ============================================
+-- IMPORTANT: After migration, update transactions.user_id
+-- to reference app_users.id if the UUIDs are different.
+-- If you use Option 2 (same UUID), no changes needed.
+-- ============================================
