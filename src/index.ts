@@ -15,18 +15,21 @@ const app = express();
 // Security Middleware
 // ===========================================
 
-// Helmet: Set security HTTP headers
-app.use(helmet());
-
-// CORS: Allow frontend origin
+// CORS: Allow frontend origin (must be before helmet and other middleware)
 app.use(
   cors({
     origin: env.corsOrigin.split(',').map((o) => o.trim()),
     credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
   })
 );
+
+// Explicitly handle preflight OPTIONS for all routes
+app.options('*', cors());
+
+// Helmet: Set security HTTP headers
+app.use(helmet());
 
 // Rate Limiting: Prevent brute force
 const limiter = rateLimit({
