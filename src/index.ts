@@ -1,5 +1,4 @@
 import express from 'express';
-import cors from 'cors';
 import helmet from 'helmet';
 import rateLimit from 'express-rate-limit';
 import { env, validateEnv } from './config/env';
@@ -15,21 +14,35 @@ const app = express();
 // Security Middleware
 // ===========================================
 
-// CORS: Allow frontend origin (must be before helmet and other middleware)
-app.use(
-  cors({
-    origin: env.corsOrigin.split(',').map((o) => o.trim()),
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization'],
-  })
-);
+// Manual CORS headers for ALL requests (Vercel serverless compatibility)
+app.use((req, res, next) => {
+  const allowedOrigins = env.corsOrigin.split(',').map((o) => o.trim());
+  const origin = req.headers.origin;
 
-// Explicitly handle preflight OPTIONS for all routes
-app.options('*', cors());
+  if (origin && allowedOrigins.includes(origin)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (allowedOrigins.includes('*')) {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
 
-// Helmet: Set security HTTP headers
-app.use(helmet());
+  res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type,Authorization');
+  res.setHeader('Access-Control-Allow-Credentials', 'true');
+  res.setHeader('Access-Control-Max-Age', '86400');
+
+  // Handle preflight immediately
+  if (req.method === 'OPTIONS') {
+    res.status(204).end();
+    return;
+  }
+
+  next();
+});
+
+// Helmet: Set security HTTP headers (with CORS-safe config)
+app.use(helmet({
+  crossOriginResourcePolicy: { policy: 'cross-origin' },
+}));
 
 // Rate Limiting: Prevent brute force
 const limiter = rateLimit({
