@@ -17,6 +17,7 @@ interface TransactionQuery {
   endDate?: string;
   type?: 'income' | 'expense';
   categoryId?: string;
+  search?: string;
   limit?: string;
   offset?: string;
 }
@@ -47,6 +48,9 @@ export async function getTransactions(ownerId: string, query: TransactionQuery) 
   }
   if (query.categoryId) {
     q = q.eq('category_id', parseInt(query.categoryId, 10));
+  }
+  if (query.search) {
+    q = q.ilike('description', `%${query.search}%`);
   }
 
   const { data, error, count } = await q;
