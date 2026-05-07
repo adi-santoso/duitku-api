@@ -19,6 +19,11 @@ app.use((req, res, next) => {
   const allowedOrigins = env.corsOrigin.split(',').map((o) => o.trim());
   const origin = req.headers.origin;
 
+  // Debug log for Vercel function logs (remove after CORS is confirmed working)
+  if (req.method === 'OPTIONS') {
+    console.log('[CORS Debug]', { origin, allowedOrigins, method: req.method });
+  }
+
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (allowedOrigins.includes('*')) {
@@ -42,6 +47,8 @@ app.use((req, res, next) => {
 // Helmet: Set security HTTP headers (with CORS-safe config)
 app.use(helmet({
   crossOriginResourcePolicy: { policy: 'cross-origin' },
+  crossOriginOpenerPolicy: { policy: 'unsafe-none' },
+  crossOriginEmbedderPolicy: false,
 }));
 
 // Rate Limiting: Prevent brute force

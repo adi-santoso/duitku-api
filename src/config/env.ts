@@ -17,7 +17,7 @@ export const env = {
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
 
   // CORS
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3001',
+  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3001,http://localhost:5173,https://duitku-indol.vercel.app',
 
   // Rate Limiting
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
