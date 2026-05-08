@@ -68,6 +68,33 @@ export const updateBudgetSchema = z.object({
 });
 
 /**
+ * Savings Goal validation schemas
+ */
+export const createSavingsGoalSchema = z.object({
+  name: z.string().min(1, 'Nama target wajib diisi').max(100),
+  targetAmount: z.number().positive('Target harus lebih dari 0'),
+  currentAmount: z.number().min(0).optional().default(0),
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal: YYYY-MM-DD').optional(),
+  icon: z.string().max(10).optional(),
+  color: z.string().max(20).optional(),
+});
+
+export const updateSavingsGoalSchema = z.object({
+  name: z.string().min(1).max(100).optional(),
+  targetAmount: z.number().positive('Target harus lebih dari 0').optional(),
+  currentAmount: z.number().min(0).optional(),
+  targetDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, 'Format tanggal: YYYY-MM-DD').nullable().optional(),
+  icon: z.string().max(10).optional(),
+  color: z.string().max(20).optional(),
+  isCompleted: z.boolean().optional(),
+});
+
+export const addContributionSchema = z.object({
+  amount: z.number().positive('Jumlah harus lebih dari 0'),
+  note: z.string().max(200).optional(),
+});
+
+/**
  * Query params validation
  */
 export const transactionQuerySchema = z.object({
