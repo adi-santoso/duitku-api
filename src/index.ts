@@ -5,29 +5,33 @@ import { env, validateEnv } from './config/env';
 import { errorHandler, notFoundHandler } from './middleware/errorHandler';
 import routes from './routes';
 
-// Validate environment variables
-validateEnv();
-
 const app = express();
 
 // ===========================================
-// Security Middleware
+// CORS - MUST be first middleware (before anything else)
 // ===========================================
 
-// Manual CORS headers for ALL requests (Vercel serverless compatibility)
 app.use((req, res, next) => {
-  const allowedOrigins = env.corsOrigin.split(',').map((o) => o.trim());
+  // Always set CORS headers regardless of anything else
   const origin = req.headers.origin;
+  const allowedOrigins = [
+    'https://duitku-indol.vercel.app',
+    'http://localhost:3001',
+    'http://localhost:5173',
+  ];
 
-  // Debug log for Vercel function logs (remove after CORS is confirmed working)
-  if (req.method === 'OPTIONS') {
-    console.log('[CORS Debug]', { origin, allowedOrigins, method: req.method });
+  // Also check env-based origins
+  if (env.corsOrigin) {
+    env.corsOrigin.split(',').map((o) => o.trim()).forEach((o) => {
+      if (!allowedOrigins.includes(o)) allowedOrigins.push(o);
+    });
   }
 
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else if (allowedOrigins.includes('*')) {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+  } else if (origin) {
+    // Fallback: allow the production frontend always
+    res.setHeader('Access-Control-Allow-Origin', 'https://duitku-indol.vercel.app');
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
@@ -35,7 +39,7 @@ app.use((req, res, next) => {
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
 
-  // Handle preflight immediately
+  // Handle preflight immediately - return before any other middleware
   if (req.method === 'OPTIONS') {
     res.status(204).end();
     return;
@@ -43,6 +47,9 @@ app.use((req, res, next) => {
 
   next();
 });
+
+// Validate environment variables (after CORS so preflight always works)
+validateEnv();
 
 // Helmet: Set security HTTP headers (with CORS-safe config)
 app.use(helmet({
