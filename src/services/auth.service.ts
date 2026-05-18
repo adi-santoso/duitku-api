@@ -1,4 +1,6 @@
+import { eq } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { appUsers } from '../db/schema';
 import { hashPassword, comparePassword } from '../utils/password';
 import { generateToken } from '../utils/jwt';
 import { JwtPayload, UserRole } from '../types';
@@ -30,35 +32,34 @@ interface AuthResult {
  */
 export async function registerOwner(input: RegisterInput): Promise<AuthResult> {
   const db = getDb();
+  const email = input.email.toLowerCase();
 
   // Check if email already exists
-  const { data: existing } = await db
-    .from('app_users')
-    .select('id')
-    .eq('email', input.email.toLowerCase())
-    .maybeSingle();
+  const existing = await db
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .where(eq(appUsers.email, email))
+    .limit(1);
 
-  if (existing) {
+  if (existing.length > 0) {
     throw new Error('Email sudah terdaftar');
   }
 
   const passwordHash = await hashPassword(input.password);
-  const displayName = input.displayName || input.email.split('@')[0];
+  const displayName = input.displayName || email.split('@')[0];
 
-  // Insert new owner
-  const { data: user, error } = await db
-    .from('app_users')
-    .insert({
-      email: input.email.toLowerCase(),
-      password_hash: passwordHash,
-      display_name: displayName,
+  const [user] = await db
+    .insert(appUsers)
+    .values({
+      email,
+      passwordHash,
+      displayName,
       role: 'owner',
-      owner_id: null,
+      ownerId: null,
     })
-    .select()
-    .single();
+    .returning();
 
-  if (error) throw new Error(`Gagal membuat akun: ${error.message}`);
+  if (!user) throw new Error('Gagal membuat akun');
 
   const payload: JwtPayload = {
     userId: user.id,
@@ -74,7 +75,7 @@ export async function registerOwner(input: RegisterInput): Promise<AuthResult> {
     user: {
       id: user.id,
       email: user.email,
-      displayName: user.display_name,
+      displayName: user.displayName,
       role: 'owner',
       ownerId: user.id,
     },
@@ -86,28 +87,26 @@ export async function registerOwner(input: RegisterInput): Promise<AuthResult> {
  */
 export async function login(input: LoginInput): Promise<AuthResult> {
   const db = getDb();
+  const email = input.email.toLowerCase();
 
-  // Find user by email
-  const { data: user, error } = await db
-    .from('app_users')
-    .select('*')
-    .eq('email', input.email.toLowerCase())
-    .maybeSingle();
+  const [user] = await db
+    .select()
+    .from(appUsers)
+    .where(eq(appUsers.email, email))
+    .limit(1);
 
-  if (error) throw new Error('Terjadi kesalahan saat login');
   if (!user) throw new Error('Email atau password salah');
 
-  // Verify password
-  const isValid = await comparePassword(input.password, user.password_hash);
+  const isValid = await comparePassword(input.password, user.passwordHash);
   if (!isValid) throw new Error('Email atau password salah');
 
-  // Determine ownerId
-  const ownerId = user.role === 'staff' ? user.owner_id : user.id;
+  const role = user.role as UserRole;
+  const ownerId = role === 'staff' ? user.ownerId! : user.id;
 
   const payload: JwtPayload = {
     userId: user.id,
     email: user.email,
-    role: user.role,
+    role,
     ownerId,
   };
 
@@ -118,8 +117,8 @@ export async function login(input: LoginInput): Promise<AuthResult> {
     user: {
       id: user.id,
       email: user.email,
-      displayName: user.display_name,
-      role: user.role,
+      displayName: user.displayName,
+      role,
       ownerId,
     },
   };

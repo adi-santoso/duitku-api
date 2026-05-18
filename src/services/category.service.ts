@@ -1,4 +1,6 @@
+import { and, asc, desc, eq, or } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { categories } from '../db/schema';
 
 interface CreateCategoryInput {
   name: string;
@@ -14,16 +16,11 @@ interface CreateCategoryInput {
 export async function getCategories(ownerId: string) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('categories')
-    .select('*')
-    .or(`is_default.eq.true,user_id.eq.${ownerId}`)
-    .order('is_default', { ascending: false })
-    .order('name');
-
-  if (error) throw new Error(`Gagal memuat kategori: ${error.message}`);
-
-  return data || [];
+  return db
+    .select()
+    .from(categories)
+    .where(or(eq(categories.isDefault, true), eq(categories.userId, ownerId)))
+    .orderBy(desc(categories.isDefault), asc(categories.name));
 }
 
 /**
@@ -32,22 +29,20 @@ export async function getCategories(ownerId: string) {
 export async function createCategory(input: CreateCategoryInput) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('categories')
-    .insert({
+  const [row] = await db
+    .insert(categories)
+    .values({
       name: input.name,
       type: input.type,
-      icon: input.icon || null,
-      color: input.color || null,
-      is_default: false,
-      user_id: input.userId,
+      icon: input.icon ?? null,
+      color: input.color ?? null,
+      isDefault: false,
+      userId: input.userId,
     })
-    .select()
-    .single();
+    .returning();
 
-  if (error) throw new Error(`Gagal membuat kategori: ${error.message}`);
-
-  return data;
+  if (!row) throw new Error('Gagal membuat kategori');
+  return row;
 }
 
 /**
@@ -56,28 +51,30 @@ export async function createCategory(input: CreateCategoryInput) {
 export async function updateCategory(
   categoryId: number,
   ownerId: string,
-  updates: Partial<CreateCategoryInput>
+  updates: Partial<CreateCategoryInput>,
 ) {
   const db = getDb();
 
-  const updateData: Record<string, unknown> = {};
+  const updateData: Partial<typeof categories.$inferInsert> = {};
   if (updates.name !== undefined) updateData.name = updates.name;
   if (updates.type !== undefined) updateData.type = updates.type;
   if (updates.icon !== undefined) updateData.icon = updates.icon;
   if (updates.color !== undefined) updateData.color = updates.color;
 
-  const { data, error } = await db
-    .from('categories')
-    .update(updateData)
-    .eq('id', categoryId)
-    .eq('user_id', ownerId)
-    .eq('is_default', false)
-    .select()
-    .single();
+  const [row] = await db
+    .update(categories)
+    .set(updateData)
+    .where(
+      and(
+        eq(categories.id, categoryId),
+        eq(categories.userId, ownerId),
+        eq(categories.isDefault, false),
+      ),
+    )
+    .returning();
 
-  if (error) throw new Error(`Gagal mengupdate kategori: ${error.message}`);
-
-  return data;
+  if (!row) throw new Error('Kategori tidak ditemukan atau tidak bisa diubah');
+  return row;
 }
 
 /**
@@ -86,12 +83,18 @@ export async function updateCategory(
 export async function deleteCategory(categoryId: number, ownerId: string) {
   const db = getDb();
 
-  const { error } = await db
-    .from('categories')
-    .delete()
-    .eq('id', categoryId)
-    .eq('user_id', ownerId)
-    .eq('is_default', false);
+  const result = await db
+    .delete(categories)
+    .where(
+      and(
+        eq(categories.id, categoryId),
+        eq(categories.userId, ownerId),
+        eq(categories.isDefault, false),
+      ),
+    )
+    .returning({ id: categories.id });
 
-  if (error) throw new Error(`Gagal menghapus kategori: ${error.message}`);
+  if (result.length === 0) {
+    throw new Error('Kategori tidak ditemukan atau tidak bisa dihapus');
+  }
 }

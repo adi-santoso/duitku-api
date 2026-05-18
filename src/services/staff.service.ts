@@ -1,4 +1,6 @@
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { appUsers } from '../db/schema';
 import { hashPassword } from '../utils/password';
 
 interface CreateStaffInput {
@@ -13,7 +15,17 @@ interface StaffRecord {
   email: string;
   display_name: string | null;
   role: string;
-  created_at: string;
+  created_at: Date | null;
+}
+
+function toStaffRecord(row: typeof appUsers.$inferSelect): StaffRecord {
+  return {
+    id: row.id,
+    email: row.email,
+    display_name: row.displayName,
+    role: row.role,
+    created_at: row.createdAt,
+  };
 }
 
 /**
@@ -21,36 +33,35 @@ interface StaffRecord {
  */
 export async function createStaff(input: CreateStaffInput): Promise<StaffRecord> {
   const db = getDb();
+  const email = input.email.toLowerCase();
 
-  // Check if email already exists
-  const { data: existing } = await db
-    .from('app_users')
-    .select('id')
-    .eq('email', input.email.toLowerCase())
-    .maybeSingle();
+  const existing = await db
+    .select({ id: appUsers.id })
+    .from(appUsers)
+    .where(eq(appUsers.email, email))
+    .limit(1);
 
-  if (existing) {
+  if (existing.length > 0) {
     throw new Error('Email sudah terdaftar');
   }
 
   const passwordHash = await hashPassword(input.password);
-  const displayName = input.displayName || input.email.split('@')[0];
+  const displayName = input.displayName || email.split('@')[0];
 
-  const { data: staff, error } = await db
-    .from('app_users')
-    .insert({
-      email: input.email.toLowerCase(),
-      password_hash: passwordHash,
-      display_name: displayName,
+  const [staff] = await db
+    .insert(appUsers)
+    .values({
+      email,
+      passwordHash,
+      displayName,
       role: 'staff',
-      owner_id: input.ownerId,
+      ownerId: input.ownerId,
     })
-    .select('id, email, display_name, role, created_at')
-    .single();
+    .returning();
 
-  if (error) throw new Error(`Gagal membuat akun staff: ${error.message}`);
+  if (!staff) throw new Error('Gagal membuat akun staff');
 
-  return staff;
+  return toStaffRecord(staff);
 }
 
 /**
@@ -59,16 +70,13 @@ export async function createStaff(input: CreateStaffInput): Promise<StaffRecord>
 export async function getStaffList(ownerId: string): Promise<StaffRecord[]> {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('app_users')
-    .select('id, email, display_name, role, created_at')
-    .eq('owner_id', ownerId)
-    .eq('role', 'staff')
-    .order('created_at', { ascending: true });
+  const rows = await db
+    .select()
+    .from(appUsers)
+    .where(and(eq(appUsers.ownerId, ownerId), eq(appUsers.role, 'staff')))
+    .orderBy(appUsers.createdAt);
 
-  if (error) throw new Error(`Gagal memuat staff: ${error.message}`);
-
-  return data || [];
+  return rows.map(toStaffRecord);
 }
 
 /**
@@ -77,23 +85,18 @@ export async function getStaffList(ownerId: string): Promise<StaffRecord[]> {
 export async function removeStaff(staffId: string, ownerId: string): Promise<void> {
   const db = getDb();
 
-  // Verify staff belongs to this owner
-  const { data: staff } = await db
-    .from('app_users')
-    .select('id')
-    .eq('id', staffId)
-    .eq('owner_id', ownerId)
-    .eq('role', 'staff')
-    .maybeSingle();
+  const result = await db
+    .delete(appUsers)
+    .where(
+      and(
+        eq(appUsers.id, staffId),
+        eq(appUsers.ownerId, ownerId),
+        eq(appUsers.role, 'staff'),
+      ),
+    )
+    .returning({ id: appUsers.id });
 
-  if (!staff) {
+  if (result.length === 0) {
     throw new Error('Staff tidak ditemukan atau bukan milik Anda');
   }
-
-  const { error } = await db
-    .from('app_users')
-    .delete()
-    .eq('id', staffId);
-
-  if (error) throw new Error(`Gagal menghapus staff: ${error.message}`);
 }

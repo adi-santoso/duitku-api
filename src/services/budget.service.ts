@@ -1,4 +1,6 @@
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { budgets, categories } from '../db/schema';
 
 interface CreateBudgetInput {
   userId: string;
@@ -9,20 +11,32 @@ interface CreateBudgetInput {
 }
 
 /**
- * Get all budgets for an owner
+ * Get all budgets for an owner, with embedded category info
  */
 export async function getBudgets(ownerId: string) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('budgets')
-    .select('*, categories(name, icon, color)')
-    .eq('user_id', ownerId)
-    .order('created_at', { ascending: false });
+  const rows = await db
+    .select({
+      id: budgets.id,
+      user_id: budgets.userId,
+      category_id: budgets.categoryId,
+      amount: budgets.amount,
+      period: budgets.period,
+      start_date: budgets.startDate,
+      created_at: budgets.createdAt,
+      categories: {
+        name: categories.name,
+        icon: categories.icon,
+        color: categories.color,
+      },
+    })
+    .from(budgets)
+    .leftJoin(categories, eq(budgets.categoryId, categories.id))
+    .where(eq(budgets.userId, ownerId))
+    .orderBy(desc(budgets.createdAt));
 
-  if (error) throw new Error(`Gagal memuat anggaran: ${error.message}`);
-
-  return data || [];
+  return rows;
 }
 
 /**
@@ -31,33 +45,51 @@ export async function getBudgets(ownerId: string) {
 export async function createBudget(input: CreateBudgetInput) {
   const db = getDb();
 
-  // Check if budget already exists for this category
-  const { data: existing } = await db
-    .from('budgets')
-    .select('id')
-    .eq('user_id', input.userId)
-    .eq('category_id', input.categoryId)
-    .maybeSingle();
+  const existing = await db
+    .select({ id: budgets.id })
+    .from(budgets)
+    .where(and(eq(budgets.userId, input.userId), eq(budgets.categoryId, input.categoryId)))
+    .limit(1);
 
-  if (existing) {
+  if (existing.length > 0) {
     throw new Error('Budget untuk kategori ini sudah ada');
   }
 
-  const { data, error } = await db
-    .from('budgets')
-    .insert({
-      user_id: input.userId,
-      category_id: input.categoryId,
-      amount: input.amount,
+  const [inserted] = await db
+    .insert(budgets)
+    .values({
+      userId: input.userId,
+      categoryId: input.categoryId,
+      amount: String(input.amount),
       period: input.period,
-      start_date: input.startDate,
+      startDate: input.startDate,
     })
-    .select('*, categories(name, icon, color)')
-    .single();
+    .returning();
 
-  if (error) throw new Error(`Gagal membuat anggaran: ${error.message}`);
+  if (!inserted) throw new Error('Gagal membuat anggaran');
 
-  return data;
+  // Return with category info to match old shape
+  const [withCategory] = await db
+    .select({
+      id: budgets.id,
+      user_id: budgets.userId,
+      category_id: budgets.categoryId,
+      amount: budgets.amount,
+      period: budgets.period,
+      start_date: budgets.startDate,
+      created_at: budgets.createdAt,
+      categories: {
+        name: categories.name,
+        icon: categories.icon,
+        color: categories.color,
+      },
+    })
+    .from(budgets)
+    .leftJoin(categories, eq(budgets.categoryId, categories.id))
+    .where(eq(budgets.id, inserted.id))
+    .limit(1);
+
+  return withCategory;
 }
 
 /**
@@ -66,26 +98,46 @@ export async function createBudget(input: CreateBudgetInput) {
 export async function updateBudget(
   budgetId: number,
   ownerId: string,
-  updates: { amount?: number; period?: string; startDate?: string }
+  updates: { amount?: number; period?: string; startDate?: string },
 ) {
   const db = getDb();
 
-  const updateData: Record<string, unknown> = {};
-  if (updates.amount !== undefined) updateData.amount = updates.amount;
+  const updateData: Partial<typeof budgets.$inferInsert> = {};
+  if (updates.amount !== undefined) updateData.amount = String(updates.amount);
   if (updates.period !== undefined) updateData.period = updates.period;
-  if (updates.startDate !== undefined) updateData.start_date = updates.startDate;
+  if (updates.startDate !== undefined) updateData.startDate = updates.startDate;
 
-  const { data, error } = await db
-    .from('budgets')
-    .update(updateData)
-    .eq('id', budgetId)
-    .eq('user_id', ownerId)
-    .select('*, categories(name, icon, color)')
-    .single();
+  const updated = await db
+    .update(budgets)
+    .set(updateData)
+    .where(and(eq(budgets.id, budgetId), eq(budgets.userId, ownerId)))
+    .returning({ id: budgets.id });
 
-  if (error) throw new Error(`Gagal mengupdate anggaran: ${error.message}`);
+  if (updated.length === 0) {
+    throw new Error('Budget tidak ditemukan');
+  }
 
-  return data;
+  const [withCategory] = await db
+    .select({
+      id: budgets.id,
+      user_id: budgets.userId,
+      category_id: budgets.categoryId,
+      amount: budgets.amount,
+      period: budgets.period,
+      start_date: budgets.startDate,
+      created_at: budgets.createdAt,
+      categories: {
+        name: categories.name,
+        icon: categories.icon,
+        color: categories.color,
+      },
+    })
+    .from(budgets)
+    .leftJoin(categories, eq(budgets.categoryId, categories.id))
+    .where(eq(budgets.id, budgetId))
+    .limit(1);
+
+  return withCategory;
 }
 
 /**
@@ -94,11 +146,12 @@ export async function updateBudget(
 export async function deleteBudget(budgetId: number, ownerId: string) {
   const db = getDb();
 
-  const { error } = await db
-    .from('budgets')
-    .delete()
-    .eq('id', budgetId)
-    .eq('user_id', ownerId);
+  const result = await db
+    .delete(budgets)
+    .where(and(eq(budgets.id, budgetId), eq(budgets.userId, ownerId)))
+    .returning({ id: budgets.id });
 
-  if (error) throw new Error(`Gagal menghapus anggaran: ${error.message}`);
+  if (result.length === 0) {
+    throw new Error('Budget tidak ditemukan');
+  }
 }

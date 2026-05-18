@@ -1,4 +1,6 @@
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { savingsContributions, savingsGoals } from '../db/schema';
 
 interface CreateSavingsGoalInput {
   userId: string;
@@ -14,7 +16,7 @@ interface UpdateSavingsGoalInput {
   name?: string;
   targetAmount?: number;
   currentAmount?: number;
-  targetDate?: string;
+  targetDate?: string | null;
   icon?: string;
   color?: string;
   isCompleted?: boolean;
@@ -33,15 +35,11 @@ interface AddContributionInput {
 export async function getSavingsGoals(ownerId: string) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('savings_goals')
-    .select('*')
-    .eq('user_id', ownerId)
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(`Gagal memuat target tabungan: ${error.message}`);
-
-  return data || [];
+  return db
+    .select()
+    .from(savingsGoals)
+    .where(eq(savingsGoals.userId, ownerId))
+    .orderBy(desc(savingsGoals.createdAt));
 }
 
 /**
@@ -50,16 +48,14 @@ export async function getSavingsGoals(ownerId: string) {
 export async function getSavingsGoalById(goalId: number, ownerId: string) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('savings_goals')
-    .select('*')
-    .eq('id', goalId)
-    .eq('user_id', ownerId)
-    .single();
+  const [row] = await db
+    .select()
+    .from(savingsGoals)
+    .where(and(eq(savingsGoals.id, goalId), eq(savingsGoals.userId, ownerId)))
+    .limit(1);
 
-  if (error) throw new Error(`Target tabungan tidak ditemukan`);
-
-  return data;
+  if (!row) throw new Error('Target tabungan tidak ditemukan');
+  return row;
 }
 
 /**
@@ -68,23 +64,21 @@ export async function getSavingsGoalById(goalId: number, ownerId: string) {
 export async function createSavingsGoal(input: CreateSavingsGoalInput) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('savings_goals')
-    .insert({
-      user_id: input.userId,
+  const [row] = await db
+    .insert(savingsGoals)
+    .values({
+      userId: input.userId,
       name: input.name,
-      target_amount: input.targetAmount,
-      current_amount: input.currentAmount || 0,
-      target_date: input.targetDate || null,
-      icon: input.icon || '🎯',
-      color: input.color || '#10B981',
+      targetAmount: String(input.targetAmount),
+      currentAmount: String(input.currentAmount ?? 0),
+      targetDate: input.targetDate ?? null,
+      icon: input.icon ?? '🎯',
+      color: input.color ?? '#10B981',
     })
-    .select()
-    .single();
+    .returning();
 
-  if (error) throw new Error(`Gagal membuat target tabungan: ${error.message}`);
-
-  return data;
+  if (!row) throw new Error('Gagal membuat target tabungan');
+  return row;
 }
 
 /**
@@ -93,31 +87,29 @@ export async function createSavingsGoal(input: CreateSavingsGoalInput) {
 export async function updateSavingsGoal(
   goalId: number,
   ownerId: string,
-  updates: UpdateSavingsGoalInput
+  updates: UpdateSavingsGoalInput,
 ) {
   const db = getDb();
 
-  const updateData: Record<string, unknown> = {};
+  const updateData: Partial<typeof savingsGoals.$inferInsert> = {
+    updatedAt: new Date(),
+  };
   if (updates.name !== undefined) updateData.name = updates.name;
-  if (updates.targetAmount !== undefined) updateData.target_amount = updates.targetAmount;
-  if (updates.currentAmount !== undefined) updateData.current_amount = updates.currentAmount;
-  if (updates.targetDate !== undefined) updateData.target_date = updates.targetDate;
+  if (updates.targetAmount !== undefined) updateData.targetAmount = String(updates.targetAmount);
+  if (updates.currentAmount !== undefined) updateData.currentAmount = String(updates.currentAmount);
+  if (updates.targetDate !== undefined) updateData.targetDate = updates.targetDate ?? null;
   if (updates.icon !== undefined) updateData.icon = updates.icon;
   if (updates.color !== undefined) updateData.color = updates.color;
-  if (updates.isCompleted !== undefined) updateData.is_completed = updates.isCompleted;
-  updateData.updated_at = new Date().toISOString();
+  if (updates.isCompleted !== undefined) updateData.isCompleted = updates.isCompleted;
 
-  const { data, error } = await db
-    .from('savings_goals')
-    .update(updateData)
-    .eq('id', goalId)
-    .eq('user_id', ownerId)
-    .select()
-    .single();
+  const [row] = await db
+    .update(savingsGoals)
+    .set(updateData)
+    .where(and(eq(savingsGoals.id, goalId), eq(savingsGoals.userId, ownerId)))
+    .returning();
 
-  if (error) throw new Error(`Gagal mengupdate target tabungan: ${error.message}`);
-
-  return data;
+  if (!row) throw new Error('Target tabungan tidak ditemukan');
+  return row;
 }
 
 /**
@@ -126,19 +118,15 @@ export async function updateSavingsGoal(
 export async function deleteSavingsGoal(goalId: number, ownerId: string) {
   const db = getDb();
 
-  // Delete contributions first
-  await db
-    .from('savings_contributions')
-    .delete()
-    .eq('goal_id', goalId);
+  // ON DELETE CASCADE on savings_contributions handles the children automatically.
+  const result = await db
+    .delete(savingsGoals)
+    .where(and(eq(savingsGoals.id, goalId), eq(savingsGoals.userId, ownerId)))
+    .returning({ id: savingsGoals.id });
 
-  const { error } = await db
-    .from('savings_goals')
-    .delete()
-    .eq('id', goalId)
-    .eq('user_id', ownerId);
-
-  if (error) throw new Error(`Gagal menghapus target tabungan: ${error.message}`);
+  if (result.length === 0) {
+    throw new Error('Target tabungan tidak ditemukan');
+  }
 }
 
 /**
@@ -147,47 +135,42 @@ export async function deleteSavingsGoal(goalId: number, ownerId: string) {
 export async function addContribution(input: AddContributionInput) {
   const db = getDb();
 
-  // Get current goal
-  const { data: goal, error: goalError } = await db
-    .from('savings_goals')
-    .select('current_amount, target_amount')
-    .eq('id', input.goalId)
-    .eq('user_id', input.userId)
-    .single();
-
-  if (goalError || !goal) throw new Error('Target tabungan tidak ditemukan');
-
-  // Insert contribution record
-  const { data: contribution, error: contribError } = await db
-    .from('savings_contributions')
-    .insert({
-      goal_id: input.goalId,
-      user_id: input.userId,
-      amount: input.amount,
-      note: input.note || null,
+  // Fetch current goal (also verifies ownership)
+  const [goal] = await db
+    .select({
+      currentAmount: savingsGoals.currentAmount,
+      targetAmount: savingsGoals.targetAmount,
     })
-    .select()
-    .single();
+    .from(savingsGoals)
+    .where(and(eq(savingsGoals.id, input.goalId), eq(savingsGoals.userId, input.userId)))
+    .limit(1);
 
-  if (contribError) throw new Error(`Gagal menambah kontribusi: ${contribError.message}`);
+  if (!goal) throw new Error('Target tabungan tidak ditemukan');
 
-  // Update goal current_amount
-  const newAmount = Number(goal.current_amount) + input.amount;
-  const isCompleted = newAmount >= Number(goal.target_amount);
-
-  const { data: updatedGoal, error: updateError } = await db
-    .from('savings_goals')
-    .update({
-      current_amount: newAmount,
-      is_completed: isCompleted,
-      updated_at: new Date().toISOString(),
+  const [contribution] = await db
+    .insert(savingsContributions)
+    .values({
+      goalId: input.goalId,
+      userId: input.userId,
+      amount: String(input.amount),
+      note: input.note ?? null,
     })
-    .eq('id', input.goalId)
-    .eq('user_id', input.userId)
-    .select()
-    .single();
+    .returning();
 
-  if (updateError) throw new Error(`Gagal mengupdate saldo: ${updateError.message}`);
+  if (!contribution) throw new Error('Gagal menambah kontribusi');
+
+  const newAmount = Number(goal.currentAmount) + input.amount;
+  const isCompleted = newAmount >= Number(goal.targetAmount);
+
+  const [updatedGoal] = await db
+    .update(savingsGoals)
+    .set({
+      currentAmount: String(newAmount),
+      isCompleted,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(savingsGoals.id, input.goalId), eq(savingsGoals.userId, input.userId)))
+    .returning();
 
   return { contribution, goal: updatedGoal };
 }
@@ -199,22 +182,17 @@ export async function getContributions(goalId: number, ownerId: string) {
   const db = getDb();
 
   // Verify ownership
-  const { error: goalError } = await db
-    .from('savings_goals')
-    .select('id')
-    .eq('id', goalId)
-    .eq('user_id', ownerId)
-    .single();
+  const [goal] = await db
+    .select({ id: savingsGoals.id })
+    .from(savingsGoals)
+    .where(and(eq(savingsGoals.id, goalId), eq(savingsGoals.userId, ownerId)))
+    .limit(1);
 
-  if (goalError) throw new Error('Target tabungan tidak ditemukan');
+  if (!goal) throw new Error('Target tabungan tidak ditemukan');
 
-  const { data, error } = await db
-    .from('savings_contributions')
-    .select('*')
-    .eq('goal_id', goalId)
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(`Gagal memuat riwayat kontribusi: ${error.message}`);
-
-  return data || [];
+  return db
+    .select()
+    .from(savingsContributions)
+    .where(eq(savingsContributions.goalId, goalId))
+    .orderBy(desc(savingsContributions.createdAt));
 }

@@ -1,13 +1,14 @@
 # DuitKu API - Backend Service
 
 ## Project Overview
-Backend API untuk aplikasi DuitKu (Personal Finance Manager). Menangani autentikasi, manajemen staff, transaksi, kategori, dan anggaran.
+Backend API untuk aplikasi DuitKu (Personal Finance Manager). Menangani autentikasi, manajemen staff, transaksi, kategori, anggaran, dan target tabungan.
 
 ## Tech Stack
-- **Runtime**: Node.js
+- **Runtime**: Node.js 20+
 - **Framework**: Express.js 5
 - **Language**: TypeScript (strict mode)
-- **Database**: Supabase PostgreSQL (accessed via service_role key, bypasses RLS)
+- **Database**: PostgreSQL (Neon, accessed via `@neondatabase/serverless`)
+- **ORM**: Drizzle ORM + Drizzle Kit
 - **Auth**: Custom JWT (bcryptjs + jsonwebtoken)
 - **Validation**: Zod
 - **Security**: Helmet, CORS, express-rate-limit
@@ -16,10 +17,9 @@ Backend API untuk aplikasi DuitKu (Personal Finance Manager). Menangani autentik
 ## Architecture
 
 ```
-Frontend (Vue.js) → Backend (Express/TS) → Supabase PostgreSQL
-                    ├── JWT Auth (custom)
-                    ├── Role-based access (owner/staff)
-                    └── service_role key (bypasses RLS)
+Frontend (Vue.js) → Backend (Express/TS + Drizzle) → Neon PostgreSQL
+                    ├── JWT Auth (custom, bcrypt)
+                    └── Role-based access (owner/staff)
 ```
 
 ### Key Concepts
@@ -34,41 +34,34 @@ Frontend (Vue.js) → Backend (Express/TS) → Supabase PostgreSQL
 duitku-api/
 ├── src/
 │   ├── config/
-│   │   ├── env.ts          # Environment variables & validation
-│   │   └── database.ts     # Supabase client (service_role)
+│   │   ├── env.ts           # Environment variables & validation
+│   │   └── database.ts      # Drizzle client (Neon serverless pool)
+│   ├── db/
+│   │   ├── schema.ts        # Drizzle schema (tables, indexes, constraints)
+│   │   ├── migrate.ts       # Migration runner (applies /drizzle SQL)
+│   │   └── seed.ts          # Seed default categories
 │   ├── middleware/
-│   │   ├── auth.ts         # JWT verification & role guards
-│   │   ├── errorHandler.ts # Global error & 404 handler
-│   │   └── validate.ts     # Zod validation middleware
+│   │   ├── auth.ts          # JWT verification & role guards
+│   │   ├── errorHandler.ts  # Global error & 404 handler
+│   │   └── validate.ts      # Zod validation middleware
 │   ├── routes/
-│   │   ├── index.ts        # Route aggregator
-│   │   ├── auth.routes.ts  # POST /register, /login, GET /me
-│   │   ├── staff.routes.ts # CRUD staff (owner only)
+│   │   ├── index.ts
+│   │   ├── auth.routes.ts
+│   │   ├── staff.routes.ts
 │   │   ├── transaction.routes.ts
 │   │   ├── category.routes.ts
-│   │   └── budget.routes.ts
-│   ├── services/
-│   │   ├── auth.service.ts       # Register, login logic
-│   │   ├── staff.service.ts      # Staff CRUD
-│   │   ├── transaction.service.ts
-│   │   ├── category.service.ts
-│   │   └── budget.service.ts
+│   │   ├── budget.routes.ts
+│   │   └── savings-goal.routes.ts
+│   ├── services/            # Business logic per domain (Drizzle queries)
 │   ├── types/
-│   │   └── index.ts        # TypeScript interfaces & types
 │   ├── utils/
-│   │   ├── jwt.ts          # Token generate & verify
-│   │   ├── password.ts     # bcrypt hash & compare
-│   │   ├── response.ts     # Standardized API responses
-│   │   └── validation.ts   # Zod schemas
-│   └── index.ts            # App entry point
-├── sql/
-│   ├── 001_create_app_users.sql  # New users table
-│   └── 002_migrate_existing_data.sql
-├── .env.example
-├── .gitignore
-├── CLAUDE.md
+│   └── index.ts
+├── drizzle/                 # Generated SQL migrations + snapshots
+├── scripts/
+│   └── migrate-from-supabase.ts  # One-time data migration helper
+├── archive/                 # Legacy Supabase SQL (kept for reference)
+├── drizzle.config.ts
 ├── package.json
-├── tsconfig.json
 └── vercel.json
 ```
 
@@ -113,6 +106,17 @@ duitku-api/
 | PUT | /api/budgets/:id | Yes | Update budget |
 | DELETE | /api/budgets/:id | Yes | Delete budget |
 
+### Savings Goals
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | /api/savings-goals | Yes | List goals |
+| GET | /api/savings-goals/:id | Yes | Get goal detail |
+| POST | /api/savings-goals | Yes | Create goal |
+| PUT | /api/savings-goals/:id | Yes | Update goal |
+| DELETE | /api/savings-goals/:id | Yes | Delete goal |
+| GET | /api/savings-goals/:id/contributions | Yes | List contributions |
+| POST | /api/savings-goals/:id/contributions | Yes | Add contribution |
+
 ## API Response Format
 
 ### Success
@@ -132,37 +136,50 @@ duitku-api/
 }
 ```
 
-## Database Schema
+## Database
 
-### app_users (NEW - replaces Supabase Auth)
-```sql
-CREATE TABLE app_users (
-  id UUID DEFAULT gen_random_uuid() PRIMARY KEY,
-  email TEXT UNIQUE NOT NULL,
-  password_hash TEXT NOT NULL,
-  display_name TEXT,
-  role TEXT NOT NULL DEFAULT 'owner' CHECK (role IN ('owner', 'staff')),
-  owner_id UUID REFERENCES app_users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  updated_at TIMESTAMPTZ DEFAULT NOW()
-);
+Schema defined as TypeScript in `src/db/schema.ts` (Drizzle). SQL migrations are generated into `/drizzle`.
+
+### Tables
+- `app_users` — owner & staff accounts (replaces former Supabase Auth)
+- `categories` — default (`is_default = true`, `user_id NULL`) + per-owner custom
+- `transactions` — references `app_users.id` (owner) and `categories.id`
+- `budgets` — one per (owner, category)
+- `savings_goals` — long-term saving targets
+- `savings_contributions` — deposit history per goal
+
+### Key constraints
+- `app_users` CHECK: owner has `owner_id IS NULL`, staff has `owner_id IS NOT NULL`.
+- `transactions.amount >= 0`, `budgets.amount > 0`, `savings_goals.target_amount > 0`.
+- All FKs cascade on owner delete; `transactions.category_id` is `ON DELETE RESTRICT`.
+
+### Database Commands
+```bash
+npm run db:generate     # Generate SQL migration from schema changes
+npm run db:migrate      # Apply migrations to DATABASE_URL
+npm run db:push         # Push schema directly (dev convenience)
+npm run db:studio       # Open Drizzle Studio
+npm run db:seed         # Seed 15 default categories
 ```
 
-### Existing tables (unchanged)
-- `transactions` — user_id references the owner's app_users.id
-- `categories` — user_id references the owner's app_users.id
-- `budgets` — user_id references the owner's app_users.id
+### One-time Supabase → Neon migration
+```bash
+# Set both DATABASE_URL (Neon) and SUPABASE_CONNECTION_STRING in .env
+npm run data:migrate-from-supabase
+```
 
 ## Environment Variables
 | Variable | Required | Description |
 |----------|----------|-------------|
-| SUPABASE_URL | Yes | Supabase project URL |
-| SUPABASE_SERVICE_ROLE_KEY | Yes | Service role key (bypasses RLS) |
-| JWT_SECRET | Yes | Secret for signing JWT tokens |
+| DATABASE_URL | Yes | Postgres connection string (Neon pooler URL recommended) |
+| JWT_SECRET | Yes | Secret for signing JWT tokens (min 32 chars) |
 | JWT_EXPIRES_IN | No | Token expiry (default: 7d) |
 | PORT | No | Server port (default: 3000) |
 | NODE_ENV | No | Environment (default: development) |
-| CORS_ORIGIN | No | Allowed origins (default: http://localhost:3001) |
+| CORS_ORIGIN | No | Allowed origins, comma-separated |
+| RATE_LIMIT_WINDOW_MS | No | Rate limit window (default 15 min) |
+| RATE_LIMIT_MAX | No | Max requests per window (default 100) |
+| SUPABASE_CONNECTION_STRING | No | Only for one-time data migration script |
 
 ## Development Commands
 ```bash
@@ -175,39 +192,30 @@ npm run lint     # Type check without emitting
 ## Security Measures
 1. **Helmet** — Security HTTP headers
 2. **CORS** — Restricted to frontend origin
-3. **Rate Limiting** — On auth endpoints (100 req/15min)
+3. **Rate Limiting** — On auth endpoints (100 req / 15 min)
 4. **JWT** — Stateless authentication with expiry
 5. **bcrypt** — Password hashing (12 salt rounds)
 6. **Zod** — Input validation on all endpoints
-7. **service_role** — Backend-only DB access (never exposed to frontend)
+7. **Parametrized SQL via Drizzle** — Prevents injection
 8. **Role guards** — Staff cannot manage other staff
 
 ## Code Style
 1. Use async/await (no callbacks)
-2. All functions have JSDoc comments
+2. All exported functions have JSDoc comments
 3. Error messages in Bahasa Indonesia (user-facing)
 4. Console logs in English (developer-facing)
 5. Strict TypeScript — no `any` types
 6. Single responsibility per file
-7. Services contain business logic, routes handle HTTP
+7. Services contain business logic; routes handle HTTP
 
 ## Deployment (Vercel)
 1. Connect GitHub repo to Vercel
-2. Set environment variables in Vercel dashboard
+2. Set environment variables in Vercel dashboard (`DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`)
 3. Vercel auto-detects `vercel.json` config
 4. All routes handled by `src/index.ts` serverless function
-
-## Git Commit Convention
-- feat: New feature
-- fix: Bug fix
-- refactor: Code refactoring
-- docs: Documentation
-- chore: Maintenance
-- security: Security improvements
+5. The `@neondatabase/serverless` driver uses HTTP/WebSocket — works inside Vercel serverless without connection-pool issues
 
 ## Notes
-- Database accessed via Supabase service_role key (bypasses all RLS)
-- All access control is handled in application layer (middleware)
-- Staff and owner share the same login endpoint
-- JWT payload contains `ownerId` which determines data access scope
-- Frontend needs to be updated to use this API instead of direct Supabase calls
+- Numeric columns (`amount`, `target_amount`, etc.) are returned as strings by Drizzle (Postgres `numeric`). Convert with `Number(value)` when arithmetic is required.
+- Frontend treats backend as the only data source; there are no direct database calls from the client.
+- When schema changes, regenerate migrations with `npm run db:generate` and commit the new SQL file in `/drizzle`.
