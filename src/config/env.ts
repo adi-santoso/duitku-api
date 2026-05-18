@@ -8,16 +8,17 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   isProduction: process.env.NODE_ENV === 'production',
 
-  // Database (Supabase)
-  supabaseUrl: process.env.SUPABASE_URL || '',
-  supabaseServiceRoleKey: process.env.SUPABASE_SERVICE_ROLE_KEY || '',
+  // Database (Neon Postgres)
+  databaseUrl: process.env.DATABASE_URL || '',
 
   // JWT
   jwtSecret: process.env.JWT_SECRET || 'fallback-secret-change-me',
   jwtExpiresIn: process.env.JWT_EXPIRES_IN || '7d',
 
   // CORS
-  corsOrigin: process.env.CORS_ORIGIN || 'http://localhost:3001,http://localhost:5173,https://duitku-indol.vercel.app',
+  corsOrigin:
+    process.env.CORS_ORIGIN ||
+    'http://localhost:3001,http://localhost:5173,https://duitku-indol.vercel.app',
 
   // Rate Limiting
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
@@ -28,7 +29,7 @@ export const env = {
  * Validate required environment variables
  */
 export function validateEnv(): void {
-  const required = ['SUPABASE_URL', 'SUPABASE_SERVICE_ROLE_KEY', 'JWT_SECRET'];
+  const required = ['DATABASE_URL', 'JWT_SECRET'];
   const missing = required.filter((key) => !process.env[key]);
 
   if (missing.length > 0) {

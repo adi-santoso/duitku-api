@@ -4,10 +4,11 @@ Backend API untuk aplikasi [DuitKu](https://github.com/adi-santoso/duitku) — P
 
 ## Tech Stack
 
-- **Runtime**: Node.js
+- **Runtime**: Node.js 20+
 - **Framework**: Express.js 5
 - **Language**: TypeScript (strict mode)
-- **Database**: PostgreSQL (Supabase)
+- **Database**: PostgreSQL (Neon)
+- **ORM**: Drizzle ORM + Drizzle Kit
 - **Auth**: Custom JWT + bcrypt
 - **Validation**: Zod
 - **Deployment**: Vercel Serverless
@@ -17,7 +18,7 @@ Backend API untuk aplikasi [DuitKu](https://github.com/adi-santoso/duitku) — P
 ### Prerequisites
 
 - Node.js 20+
-- Supabase project (untuk PostgreSQL database)
+- A PostgreSQL database (Neon recommended; any Postgres 14+ works)
 
 ### Installation
 
@@ -37,20 +38,30 @@ cp .env.example .env
 
 | Variable | Description |
 |----------|-------------|
-| `SUPABASE_URL` | Supabase project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | Service role key (Settings → API) |
+| `DATABASE_URL` | Postgres connection string (Neon pooler URL recommended) |
 | `JWT_SECRET` | Secret untuk sign JWT (min 32 karakter) |
 | `JWT_EXPIRES_IN` | Token expiry (default: `7d`) |
 | `PORT` | Server port (default: `3000`) |
-| `CORS_ORIGIN` | Allowed frontend origin |
+| `CORS_ORIGIN` | Allowed frontend origin (comma-separated) |
 
 ### Database Setup
 
-Jalankan SQL berikut di **Supabase SQL Editor**:
+Apply migrations dan seed default categories:
 
 ```bash
-# File: sql/001_create_app_users.sql
+npm run db:migrate    # apply Drizzle migrations to DATABASE_URL
+npm run db:seed       # insert 15 default categories
 ```
+
+Drizzle commands:
+
+| Command | Description |
+|---------|-------------|
+| `npm run db:generate` | Generate SQL migration dari perubahan schema |
+| `npm run db:migrate` | Apply migrasi ke database |
+| `npm run db:push` | Push schema langsung tanpa migration file (dev only) |
+| `npm run db:studio` | Buka Drizzle Studio (GUI) di browser |
+| `npm run db:seed` | Seed default categories |
 
 ### Run Development Server
 
@@ -106,6 +117,18 @@ Server berjalan di `http://localhost:3000`.
 | PUT | `/api/budgets/:id` | Bearer | Update |
 | DELETE | `/api/budgets/:id` | Bearer | Delete |
 
+### Savings Goals
+
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/savings-goals` | Bearer | List all goals |
+| GET | `/api/savings-goals/:id` | Bearer | Get goal detail |
+| POST | `/api/savings-goals` | Bearer | Create goal |
+| PUT | `/api/savings-goals/:id` | Bearer | Update goal |
+| DELETE | `/api/savings-goals/:id` | Bearer | Delete goal |
+| GET | `/api/savings-goals/:id/contributions` | Bearer | List contributions |
+| POST | `/api/savings-goals/:id/contributions` | Bearer | Add contribution |
+
 ### Health Check
 
 ```
@@ -132,10 +155,9 @@ GET /api/health
 ## Architecture
 
 ```
-Frontend (Vue.js) → Backend (Express/TS) → Supabase PostgreSQL
-                    ├── JWT Auth (custom)
-                    ├── Role-based access (owner/staff)
-                    └── service_role key (bypasses RLS)
+Frontend (Vue.js) → Backend (Express/TS + Drizzle) → Neon PostgreSQL
+                    ├── JWT Auth (custom, bcrypt)
+                    └── Role-based access (owner/staff)
 ```
 
 ### Owner vs Staff
@@ -157,7 +179,7 @@ npm run lint     # Type check
 
 1. Push ke GitHub
 2. Import di [vercel.com/new](https://vercel.com/new)
-3. Set environment variables
+3. Set environment variables (`DATABASE_URL`, `JWT_SECRET`, `CORS_ORIGIN`)
 4. Deploy
 
 ## Security
@@ -168,7 +190,7 @@ npm run lint     # Type check
 - bcrypt (password hashing, 12 rounds)
 - Zod (input validation)
 - JWT (stateless auth with expiry)
-- service_role key (backend-only, never exposed)
+- Parametrized SQL via Drizzle (prevents injection)
 
 ## License
 

@@ -1,4 +1,6 @@
+import { and, desc, eq, gte, ilike, lte, sql } from 'drizzle-orm';
 import { getDb } from '../config/database';
+import { categories, transactions } from '../db/schema';
 
 interface CreateTransactionInput {
   userId: string;
@@ -22,6 +24,26 @@ interface TransactionQuery {
   offset?: string;
 }
 
+const SELECT_WITH_CATEGORY = {
+  id: transactions.id,
+  user_id: transactions.userId,
+  category_id: transactions.categoryId,
+  type: transactions.type,
+  amount: transactions.amount,
+  description: transactions.description,
+  receipt_image: transactions.receiptImage,
+  transaction_date: transactions.transactionDate,
+  is_recurring: transactions.isRecurring,
+  recurring_frequency: transactions.recurringFrequency,
+  created_at: transactions.createdAt,
+  updated_at: transactions.updatedAt,
+  categories: {
+    name: categories.name,
+    icon: categories.icon,
+    color: categories.color,
+  },
+} as const;
+
 /**
  * Get transactions for a data owner (owner sees own data, staff sees owner's data)
  */
@@ -30,34 +52,31 @@ export async function getTransactions(ownerId: string, query: TransactionQuery) 
   const limit = parseInt(query.limit || '50', 10);
   const offset = parseInt(query.offset || '0', 10);
 
-  let q = db
-    .from('transactions')
-    .select('*, categories(name, icon, color)', { count: 'exact' })
-    .eq('user_id', ownerId)
-    .order('transaction_date', { ascending: false })
-    .range(offset, offset + limit - 1);
+  const filters = [eq(transactions.userId, ownerId)];
+  if (query.startDate) filters.push(gte(transactions.transactionDate, query.startDate));
+  if (query.endDate) filters.push(lte(transactions.transactionDate, query.endDate));
+  if (query.type) filters.push(eq(transactions.type, query.type));
+  if (query.categoryId) filters.push(eq(transactions.categoryId, parseInt(query.categoryId, 10)));
+  if (query.search) filters.push(ilike(transactions.description, `%${query.search}%`));
 
-  if (query.startDate) {
-    q = q.gte('transaction_date', query.startDate);
-  }
-  if (query.endDate) {
-    q = q.lte('transaction_date', query.endDate);
-  }
-  if (query.type) {
-    q = q.eq('type', query.type);
-  }
-  if (query.categoryId) {
-    q = q.eq('category_id', parseInt(query.categoryId, 10));
-  }
-  if (query.search) {
-    q = q.ilike('description', `%${query.search}%`);
-  }
+  const whereClause = and(...filters);
 
-  const { data, error, count } = await q;
+  const [data, totalResult] = await Promise.all([
+    db
+      .select(SELECT_WITH_CATEGORY)
+      .from(transactions)
+      .leftJoin(categories, eq(transactions.categoryId, categories.id))
+      .where(whereClause)
+      .orderBy(desc(transactions.transactionDate))
+      .limit(limit)
+      .offset(offset),
+    db
+      .select({ count: sql<number>`count(*)::int` })
+      .from(transactions)
+      .where(whereClause),
+  ]);
 
-  if (error) throw new Error(`Gagal memuat transaksi: ${error.message}`);
-
-  return { transactions: data || [], total: count || 0 };
+  return { transactions: data, total: totalResult[0]?.count ?? 0 };
 }
 
 /**
@@ -66,25 +85,31 @@ export async function getTransactions(ownerId: string, query: TransactionQuery) 
 export async function createTransaction(input: CreateTransactionInput) {
   const db = getDb();
 
-  const { data, error } = await db
-    .from('transactions')
-    .insert({
-      user_id: input.userId,
-      category_id: input.categoryId,
+  const [inserted] = await db
+    .insert(transactions)
+    .values({
+      userId: input.userId,
+      categoryId: input.categoryId,
       type: input.type,
-      amount: input.amount,
-      description: input.description || null,
-      receipt_image: input.receiptImage || null,
-      transaction_date: input.transactionDate,
-      is_recurring: input.isRecurring || false,
-      recurring_frequency: input.recurringFrequency || null,
+      amount: String(input.amount),
+      description: input.description ?? null,
+      receiptImage: input.receiptImage ?? null,
+      transactionDate: input.transactionDate,
+      isRecurring: input.isRecurring ?? false,
+      recurringFrequency: input.recurringFrequency ?? null,
     })
-    .select('*, categories(name, icon, color)')
-    .single();
+    .returning({ id: transactions.id });
 
-  if (error) throw new Error(`Gagal membuat transaksi: ${error.message}`);
+  if (!inserted) throw new Error('Gagal membuat transaksi');
 
-  return data;
+  const [row] = await db
+    .select(SELECT_WITH_CATEGORY)
+    .from(transactions)
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .where(eq(transactions.id, inserted.id))
+    .limit(1);
+
+  return row;
 }
 
 /**
@@ -93,31 +118,41 @@ export async function createTransaction(input: CreateTransactionInput) {
 export async function updateTransaction(
   transactionId: number,
   ownerId: string,
-  updates: Partial<CreateTransactionInput>
+  updates: Partial<CreateTransactionInput>,
 ) {
   const db = getDb();
 
-  const updateData: Record<string, unknown> = {};
-  if (updates.categoryId !== undefined) updateData.category_id = updates.categoryId;
+  const updateData: Partial<typeof transactions.$inferInsert> = {
+    updatedAt: new Date(),
+  };
+  if (updates.categoryId !== undefined) updateData.categoryId = updates.categoryId;
   if (updates.type !== undefined) updateData.type = updates.type;
-  if (updates.amount !== undefined) updateData.amount = updates.amount;
+  if (updates.amount !== undefined) updateData.amount = String(updates.amount);
   if (updates.description !== undefined) updateData.description = updates.description;
-  if (updates.receiptImage !== undefined) updateData.receipt_image = updates.receiptImage;
-  if (updates.transactionDate !== undefined) updateData.transaction_date = updates.transactionDate;
-  if (updates.isRecurring !== undefined) updateData.is_recurring = updates.isRecurring;
-  if (updates.recurringFrequency !== undefined) updateData.recurring_frequency = updates.recurringFrequency;
+  if (updates.receiptImage !== undefined) updateData.receiptImage = updates.receiptImage;
+  if (updates.transactionDate !== undefined) updateData.transactionDate = updates.transactionDate;
+  if (updates.isRecurring !== undefined) updateData.isRecurring = updates.isRecurring;
+  if (updates.recurringFrequency !== undefined)
+    updateData.recurringFrequency = updates.recurringFrequency;
 
-  const { data, error } = await db
-    .from('transactions')
-    .update(updateData)
-    .eq('id', transactionId)
-    .eq('user_id', ownerId)
-    .select('*, categories(name, icon, color)')
-    .single();
+  const updated = await db
+    .update(transactions)
+    .set(updateData)
+    .where(and(eq(transactions.id, transactionId), eq(transactions.userId, ownerId)))
+    .returning({ id: transactions.id });
 
-  if (error) throw new Error(`Gagal mengupdate transaksi: ${error.message}`);
+  if (updated.length === 0) {
+    throw new Error('Transaksi tidak ditemukan');
+  }
 
-  return data;
+  const [row] = await db
+    .select(SELECT_WITH_CATEGORY)
+    .from(transactions)
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .where(eq(transactions.id, transactionId))
+    .limit(1);
+
+  return row;
 }
 
 /**
@@ -126,44 +161,44 @@ export async function updateTransaction(
 export async function deleteTransaction(transactionId: number, ownerId: string) {
   const db = getDb();
 
-  const { error } = await db
-    .from('transactions')
-    .delete()
-    .eq('id', transactionId)
-    .eq('user_id', ownerId);
+  const result = await db
+    .delete(transactions)
+    .where(and(eq(transactions.id, transactionId), eq(transactions.userId, ownerId)))
+    .returning({ id: transactions.id });
 
-  if (error) throw new Error(`Gagal menghapus transaksi: ${error.message}`);
+  if (result.length === 0) {
+    throw new Error('Transaksi tidak ditemukan');
+  }
 }
 
 /**
  * Get transaction summary (total income, expense, balance)
  */
-export async function getTransactionSummary(ownerId: string, startDate?: string, endDate?: string) {
+export async function getTransactionSummary(
+  ownerId: string,
+  startDate?: string,
+  endDate?: string,
+) {
   const db = getDb();
 
-  let q = db
-    .from('transactions')
-    .select('type, amount')
-    .eq('user_id', ownerId);
+  const filters = [eq(transactions.userId, ownerId)];
+  if (startDate) filters.push(gte(transactions.transactionDate, startDate));
+  if (endDate) filters.push(lte(transactions.transactionDate, endDate));
 
-  if (startDate) q = q.gte('transaction_date', startDate);
-  if (endDate) q = q.lte('transaction_date', endDate);
+  const [result] = await db
+    .select({
+      totalIncome: sql<string>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'income' THEN ${transactions.amount} ELSE 0 END), 0)`,
+      totalExpense: sql<string>`COALESCE(SUM(CASE WHEN ${transactions.type} = 'expense' THEN ${transactions.amount} ELSE 0 END), 0)`,
+    })
+    .from(transactions)
+    .where(and(...filters));
 
-  const { data, error } = await q;
-
-  if (error) throw new Error(`Gagal memuat summary: ${error.message}`);
-
-  const summary = (data || []).reduce(
-    (acc, t) => {
-      if (t.type === 'income') acc.totalIncome += Number(t.amount);
-      else acc.totalExpense += Number(t.amount);
-      return acc;
-    },
-    { totalIncome: 0, totalExpense: 0 }
-  );
+  const totalIncome = Number(result?.totalIncome ?? 0);
+  const totalExpense = Number(result?.totalExpense ?? 0);
 
   return {
-    ...summary,
-    balance: summary.totalIncome - summary.totalExpense,
+    totalIncome,
+    totalExpense,
+    balance: totalIncome - totalExpense,
   };
 }
