@@ -12,26 +12,11 @@ const app = express();
 // ===========================================
 
 app.use((req, res, next) => {
-  // Always set CORS headers regardless of anything else
   const origin = req.headers.origin;
-  const allowedOrigins = [
-    'https://duitku-indol.vercel.app',
-    'http://localhost:3001',
-    'http://localhost:5173',
-  ];
-
-  // Also check env-based origins
-  if (env.corsOrigin) {
-    env.corsOrigin.split(',').map((o) => o.trim()).forEach((o) => {
-      if (!allowedOrigins.includes(o)) allowedOrigins.push(o);
-    });
-  }
+  const allowedOrigins = env.corsOrigin.split(',').map((o) => o.trim());
 
   if (origin && allowedOrigins.includes(origin)) {
     res.setHeader('Access-Control-Allow-Origin', origin);
-  } else if (origin) {
-    // Fallback: allow the production frontend always
-    res.setHeader('Access-Control-Allow-Origin', 'https://duitku-indol.vercel.app');
   }
 
   res.setHeader('Access-Control-Allow-Methods', 'GET,POST,PUT,DELETE,PATCH,OPTIONS');
