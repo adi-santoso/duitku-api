@@ -18,7 +18,7 @@ export const env = {
   // CORS
   corsOrigin:
     process.env.CORS_ORIGIN ||
-    'http://localhost:3001,http://localhost:5173,https://duitku-indol.vercel.api,https://duitku.gatrion.app',
+    'http://localhost:3001,http://localhost:5173,https://duitku-indol.vercel.api,https://duitku.gatrion.my.id',
 
   // Rate Limiting
   rateLimitWindowMs: parseInt(process.env.RATE_LIMIT_WINDOW_MS || '900000', 10),
