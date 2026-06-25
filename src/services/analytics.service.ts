@@ -140,32 +140,25 @@ export async function getSpendingVelocity(ownerId: string) {
   const dailyRate = daysPassed > 0 ? currentSpent / daysPassed : 0;
   const projectedTotal = dailyRate * daysInMonth;
 
-  // Get historical average (last 6 months)
+  // Get historical average (last 6 months excluding current month)
   const sixMonthsAgo = new Date(year, month - 7, 1).toISOString().split('T')[0];
+  const lastMonthEnd = new Date(year, month - 1, 0).toISOString().split('T')[0];
 
-  const [historicalResult] = await db
-    .select({
-      avgMonthlyExpense: sql<string>`COALESCE(AVG(monthly_total), 0)`,
-    })
-    .from(
-      db
-        .select({
-          monthly_total: sql<string>`SUM(amount)`,
-        })
-        .from(transactions)
-        .where(
-          and(
-            eq(transactions.userId, ownerId),
-            eq(transactions.type, 'expense'),
-            gte(transactions.transactionDate, sixMonthsAgo),
-            lte(transactions.transactionDate, monthStart),
-          ),
-        )
-        .groupBy(sql`DATE_TRUNC('month', transaction_date)`)
-        .as('monthly_expenses'),
-    );
+  // Raw SQL for subquery to get monthly totals then average
+  const historicalResult = await db.execute<{ avg_monthly_expense: string }>(sql`
+    SELECT COALESCE(AVG(monthly_total), 0) as avg_monthly_expense
+    FROM (
+      SELECT SUM(amount) as monthly_total
+      FROM transactions
+      WHERE user_id = ${ownerId}
+        AND type = 'expense'
+        AND transaction_date >= ${sixMonthsAgo}
+        AND transaction_date <= ${lastMonthEnd}
+      GROUP BY DATE_TRUNC('month', transaction_date)
+    ) AS monthly_expenses
+  `);
 
-  const historicalAvg = Number(historicalResult?.avgMonthlyExpense ?? 0);
+  const historicalAvg = Number(historicalResult.rows[0]?.avg_monthly_expense ?? 0);
   const percentageVsHistorical =
     historicalAvg > 0 ? ((projectedTotal - historicalAvg) / historicalAvg) * 100 : 0;
 
