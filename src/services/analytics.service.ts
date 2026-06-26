@@ -1,4 +1,4 @@
-import { and, desc, eq, gte, lte, sql } from 'drizzle-orm';
+import { and, desc, eq, gte, lte, sql, count } from 'drizzle-orm';
 import { getDb } from '../config/database';
 import { budgets, categories, transactions } from '../db/schema';
 
@@ -666,5 +666,166 @@ export async function getCashflowForecast(ownerId: string, monthsAhead: number =
       avgBalance: avgIncome - avgExpense,
     },
     alerts,
+  };
+}
+
+/**
+ * Detect recurring transaction patterns
+ * Analyzes historical transactions to find patterns that repeat regularly
+ */
+export async function detectRecurringPatterns(ownerId: string, minOccurrences: number = 3) {
+  const db = getDb();
+  const now = new Date();
+
+  // Get last 6 months of transactions
+  const sixMonthsAgo = new Date(now);
+  sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+  const startDate = sixMonthsAgo.toISOString().split('T')[0];
+
+  // Get all non-recurring transactions
+  const allTransactions = await db
+    .select({
+      id: transactions.id,
+      categoryId: transactions.categoryId,
+      categoryName: categories.name,
+      categoryIcon: categories.icon,
+      type: transactions.type,
+      amount: transactions.amount,
+      description: transactions.description,
+      transactionDate: transactions.transactionDate,
+    })
+    .from(transactions)
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .where(
+      and(
+        eq(transactions.userId, ownerId),
+        eq(transactions.isRecurring, false),
+        gte(transactions.transactionDate, startDate),
+      ),
+    )
+    .orderBy(transactions.transactionDate);
+
+  // Group by category + amount tolerance (±5%)
+  const patterns: Map<string, any[]> = new Map();
+
+  allTransactions.forEach((t) => {
+    const baseAmount = Number(t.amount);
+    const categoryId = t.categoryId;
+
+    // Find existing pattern that matches
+    let matchedKey = null;
+    for (const [key, group] of patterns.entries()) {
+      const [existingCategoryId, existingAmount] = key.split('_').map(Number);
+
+      if (existingCategoryId === categoryId) {
+        const tolerance = existingAmount * 0.05; // ±5%
+        if (Math.abs(baseAmount - existingAmount) <= tolerance) {
+          matchedKey = key;
+          break;
+        }
+      }
+    }
+
+    if (matchedKey) {
+      patterns.get(matchedKey)!.push(t);
+    } else {
+      const key = `${categoryId}_${baseAmount}`;
+      patterns.set(key, [t]);
+    }
+  });
+
+  // Analyze patterns for regularity
+  const detectedPatterns = [];
+
+  for (const [key, group] of patterns.entries()) {
+    if (group.length < minOccurrences) continue;
+
+    // Calculate intervals between transactions (in days)
+    const intervals: number[] = [];
+    for (let i = 1; i < group.length; i++) {
+      const prev = new Date(group[i - 1].transactionDate).getTime();
+      const curr = new Date(group[i].transactionDate).getTime();
+      const daysDiff = Math.round((curr - prev) / (1000 * 60 * 60 * 24));
+      intervals.push(daysDiff);
+    }
+
+    // Calculate average interval and variance
+    const avgInterval = intervals.reduce((sum, i) => sum + i, 0) / intervals.length;
+    const variance = intervals.reduce((sum, i) => sum + Math.pow(i - avgInterval, 2), 0) / intervals.length;
+    const stdDev = Math.sqrt(variance);
+    const coefficientOfVariation = avgInterval > 0 ? stdDev / avgInterval : 1;
+
+    // Only consider patterns with low variance (consistent intervals)
+    // CV < 0.2 means consistent pattern
+    if (coefficientOfVariation > 0.2) continue;
+
+    // Determine frequency
+    let frequency: 'daily' | 'weekly' | 'monthly' | 'yearly' | null = null;
+    let confidence = 0;
+
+    if (avgInterval >= 1 && avgInterval <= 3) {
+      frequency = 'daily';
+      confidence = Math.max(0, 100 - coefficientOfVariation * 100);
+    } else if (avgInterval >= 6 && avgInterval <= 8) {
+      frequency = 'weekly';
+      confidence = Math.max(0, 100 - coefficientOfVariation * 100);
+    } else if (avgInterval >= 28 && avgInterval <= 32) {
+      frequency = 'monthly';
+      confidence = Math.max(0, 100 - coefficientOfVariation * 100);
+    } else if (avgInterval >= 360 && avgInterval <= 370) {
+      frequency = 'yearly';
+      confidence = Math.max(0, 100 - coefficientOfVariation * 100);
+    }
+
+    if (!frequency) continue;
+
+    // Calculate next predicted date
+    const lastTransaction = group[group.length - 1];
+    const lastDate = new Date(lastTransaction.transactionDate);
+    const nextDate = new Date(lastDate);
+    nextDate.setDate(nextDate.getDate() + Math.round(avgInterval));
+
+    // Calculate average amount
+    const avgAmount = group.reduce((sum, t) => sum + Number(t.amount), 0) / group.length;
+
+    detectedPatterns.push({
+      categoryId: group[0].categoryId,
+      categoryName: group[0].categoryName || 'Unknown',
+      categoryIcon: group[0].categoryIcon || '📊',
+      type: group[0].type,
+      description: group[0].description || null,
+      frequency,
+      avgAmount,
+      occurrences: group.length,
+      avgInterval: Math.round(avgInterval),
+      confidence: Number(confidence.toFixed(1)),
+      lastDate: lastTransaction.transactionDate,
+      nextPredictedDate: nextDate.toISOString().split('T')[0],
+      transactions: group.map((t) => ({
+        id: t.id,
+        amount: Number(t.amount),
+        date: t.transactionDate,
+        description: t.description,
+      })),
+    });
+  }
+
+  // Sort by confidence (highest first)
+  detectedPatterns.sort((a, b) => b.confidence - a.confidence);
+
+  return {
+    patterns: detectedPatterns,
+    summary: {
+      totalPatterns: detectedPatterns.length,
+      byFrequency: {
+        daily: detectedPatterns.filter((p) => p.frequency === 'daily').length,
+        weekly: detectedPatterns.filter((p) => p.frequency === 'weekly').length,
+        monthly: detectedPatterns.filter((p) => p.frequency === 'monthly').length,
+        yearly: detectedPatterns.filter((p) => p.frequency === 'yearly').length,
+      },
+      potentialSavings: detectedPatterns
+        .filter((p) => p.type === 'expense')
+        .reduce((sum, p) => sum + p.avgAmount * (p.frequency === 'monthly' ? 12 : p.frequency === 'weekly' ? 52 : p.frequency === 'daily' ? 365 : 1), 0),
+    },
   };
 }

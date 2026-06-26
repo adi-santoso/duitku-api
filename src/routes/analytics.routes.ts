@@ -160,4 +160,31 @@ router.get('/forecast', authenticate, async (req: AuthRequest, res, next) => {
   }
 });
 
+/**
+ * GET /api/analytics/recurring-patterns
+ * Detect recurring transaction patterns
+ */
+router.get('/recurring-patterns', authenticate, async (req: AuthRequest, res, next) => {
+  try {
+    const { ownerId } = req.user!;
+    const minOccurrences = parseInt(req.query.minOccurrences as string) || 3;
+
+    if (minOccurrences < 2 || minOccurrences > 10) {
+      return res.status(400).json({
+        success: false,
+        error: 'minOccurrences must be between 2 and 10',
+      });
+    }
+
+    const patterns = await analyticsService.detectRecurringPatterns(ownerId, minOccurrences);
+
+    res.json({
+      success: true,
+      data: patterns,
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
 export default router;
