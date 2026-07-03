@@ -90,14 +90,20 @@ app.use(notFoundHandler);
 app.use(errorHandler);
 
 // ===========================================
-// Start Server (only in non-serverless mode)
+// Start Server
 // ===========================================
 
-if (env.nodeEnv !== 'production') {
+// Check if running in Vercel serverless (has VERCEL env var)
+const isVercel = process.env.VERCEL === '1';
+
+if (!isVercel) {
+  // Running on traditional server (PM2, standalone, etc)
   app.listen(env.port, () => {
     console.log(`[Server] Running on http://localhost:${env.port}`);
     console.log(`[Server] Environment: ${env.nodeEnv}`);
   });
+} else {
+  console.log('[Server] Running in Vercel serverless mode');
 }
 
 // Export for Vercel serverless
