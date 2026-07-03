@@ -3,7 +3,7 @@ name: Deploy DuitKu API
 on:
   push:
     branches:
-      - main
+      - master
     paths:
       - 'src/**'
       - 'package.json'
@@ -34,10 +34,10 @@ jobs:
             git fetch origin
 
             echo "=== Current commit: $(git rev-parse HEAD) ==="
-            echo "=== Target commit: $(git rev-parse origin/main) ==="
+            echo "=== Target commit: $(git rev-parse origin/master) ==="
 
-            echo "=== Resetting to origin/main (HARD RESET) ==="
-            git reset --hard origin/main
+            echo "=== Resetting to origin/master (HARD RESET) ==="
+            git reset --hard origin/master
 
             echo "=== Cleaning untracked files ==="
             git clean -fd
