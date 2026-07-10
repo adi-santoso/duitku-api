@@ -15,6 +15,13 @@
       "when": 1783648310070,
       "tag": "0001_light_unicorn",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1783651398671,
+      "tag": "0002_sad_zzzax",
+      "breakpoints": true
     }
   ]
 }

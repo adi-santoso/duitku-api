@@ -190,14 +190,17 @@ export const projects = pgTable(
       .references(() => appUsers.id, { onDelete: 'cascade' }),
     name: text('name').notNull(),
     description: text('description'),
-    totalBudget: numeric('total_budget').notNull(),
+    totalBudget: numeric('total_budget'),
     isCompleted: boolean('is_completed').default(false),
     createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
     updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
   },
   (t) => ({
     userIdx: index('idx_projects_user_id').on(t.userId),
-    budgetCheck: check('projects_total_budget_check', sql`${t.totalBudget} >= 0`),
+    budgetCheck: check(
+      'projects_total_budget_check',
+      sql`${t.totalBudget} IS NULL OR ${t.totalBudget} >= 0`,
+    ),
   }),
 );
 

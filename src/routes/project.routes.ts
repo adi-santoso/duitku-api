@@ -18,7 +18,7 @@ router.use(authenticate);
 const createProjectSchema = z.object({
   name: z.string().min(1, 'Nama project wajib diisi').max(255),
   description: z.string().optional(),
-  totalBudget: z.number().min(0, 'Total budget harus >= 0'),
+  totalBudget: z.number().min(0, 'Total budget harus >= 0').optional(),
 });
 
 const updateProjectSchema = z.object({
