@@ -179,6 +179,59 @@ export const savingsContributions = pgTable(
 );
 
 // ============================================
+// projects - project planning (e.g. renovation, shopping list)
+// ============================================
+export const projects = pgTable(
+  'projects',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    userId: uuid('user_id')
+      .notNull()
+      .references(() => appUsers.id, { onDelete: 'cascade' }),
+    name: text('name').notNull(),
+    description: text('description'),
+    totalBudget: numeric('total_budget').notNull(),
+    isCompleted: boolean('is_completed').default(false),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    userIdx: index('idx_projects_user_id').on(t.userId),
+    budgetCheck: check('projects_total_budget_check', sql`${t.totalBudget} >= 0`),
+  }),
+);
+
+// ============================================
+// project_items - list items in a project
+// ============================================
+export const projectItems = pgTable(
+  'project_items',
+  {
+    id: bigserial('id', { mode: 'number' }).primaryKey(),
+    projectId: bigint('project_id', { mode: 'number' })
+      .notNull()
+      .references(() => projects.id, { onDelete: 'cascade' }),
+    categoryId: bigint('category_id', { mode: 'number' })
+      .notNull()
+      .references(() => categories.id, { onDelete: 'restrict' }),
+    name: text('name').notNull(),
+    estimatedPrice: numeric('estimated_price').notNull(),
+    isPurchased: boolean('is_purchased').default(false),
+    transactionId: bigint('transaction_id', { mode: 'number' }).references(() => transactions.id, {
+      onDelete: 'cascade',
+    }),
+    notes: text('notes'),
+    createdAt: timestamp('created_at', { withTimezone: true }).defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).defaultNow(),
+  },
+  (t) => ({
+    projectIdx: index('idx_project_items_project_id').on(t.projectId),
+    transactionIdx: index('idx_project_items_transaction_id').on(t.transactionId),
+    priceCheck: check('project_items_estimated_price_check', sql`${t.estimatedPrice} >= 0`),
+  }),
+);
+
+// ============================================
 // Type exports for use in services
 // ============================================
 export type AppUser = typeof appUsers.$inferSelect;
@@ -193,3 +246,7 @@ export type SavingsGoal = typeof savingsGoals.$inferSelect;
 export type NewSavingsGoal = typeof savingsGoals.$inferInsert;
 export type SavingsContribution = typeof savingsContributions.$inferSelect;
 export type NewSavingsContribution = typeof savingsContributions.$inferInsert;
+export type Project = typeof projects.$inferSelect;
+export type NewProject = typeof projects.$inferInsert;
+export type ProjectItem = typeof projectItems.$inferSelect;
+export type NewProjectItem = typeof projectItems.$inferInsert;

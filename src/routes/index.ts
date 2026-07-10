@@ -6,6 +6,7 @@ import categoryRoutes from './category.routes';
 import budgetRoutes from './budget.routes';
 import savingsGoalRoutes from './savings-goal.routes';
 import analyticsRoutes from './analytics.routes';
+import projectRoutes from './project.routes';
 
 const router = Router();
 
@@ -16,5 +17,6 @@ router.use('/categories', categoryRoutes);
 router.use('/budgets', budgetRoutes);
 router.use('/savings-goals', savingsGoalRoutes);
 router.use('/analytics', analyticsRoutes);
+router.use('/projects', projectRoutes);
 
 export default router;
