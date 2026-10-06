@@ -30,15 +30,29 @@ jobs:
     timeout-minutes: 65
     steps:
     - name: Deploy and verify health
-      uses: appleboy/ssh-action@v1.2.0
-      with:
-        host: ${{ secrets.DEPLOY_HOST }}
-        username: ${{ secrets.DEPLOY_USER }}
-        key: ${{ secrets.DEPLOY_SSH_KEY }}
-        port: ${{ secrets.DEPLOY_PORT }}
-        fingerprint: ${{ secrets.DEPLOY_FINGERPRINT }}
-        command_timeout: 60m
-        script: deploy ${{ github.sha }}
+      env:
+        DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        DEPLOY_HOST_KEY: ${{ secrets.DEPLOY_HOST_KEY }}
+      run: 'set -euo pipefail
+
+        task_ssh_dir=$(mktemp -d)
+
+        trap ''rm -rf "$task_ssh_dir"'' EXIT
+
+        printf "%s\n" "$DEPLOY_SSH_KEY" > "$task_ssh_dir/key"
+
+        printf "%s\n" "$DEPLOY_HOST_KEY" > "$task_ssh_dir/known_hosts"
+
+        chmod 600 "$task_ssh_dir/key" "$task_ssh_dir/known_hosts"
+
+        ssh -i "$task_ssh_dir/key" -p "$DEPLOY_PORT" -o BatchMode=yes -o ConnectTimeout=30 -o HostKeyAlgorithms=ssh-ed25519
+        -o StrictHostKeyChecking=yes -o UserKnownHostsFile="$task_ssh_dir/known_hosts" "$DEPLOY_USER@$DEPLOY_HOST" "deploy
+        $GITHUB_SHA"
+
+        '
 'on':
   push:
     branches:
