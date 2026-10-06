@@ -19,12 +19,6 @@
  */
 import 'dotenv/config';
 import pg from 'pg';
-import { neonConfig, Pool as NeonPool } from '@neondatabase/serverless';
-import ws from 'ws';
-
-if (typeof WebSocket === 'undefined') {
-  neonConfig.webSocketConstructor = ws;
-}
 
 const { Pool: PgPool } = pg;
 
@@ -38,7 +32,7 @@ const supabase = new PgPool({
   connectionString: SUPABASE_URL,
   ssl: { rejectUnauthorized: false },
 });
-const neon = new NeonPool({ connectionString: NEON_URL });
+const neon = new PgPool({ connectionString: NEON_URL });
 
 async function tableExists(name: string): Promise<boolean> {
   const { rows } = await supabase.query(
